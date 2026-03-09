@@ -131,18 +131,3 @@ async def suggest_qna(current_user: User = Depends(require_roles(["store_owner",
     }
 
 
-@router.post("/pos-simulation")
-async def pos_simulation(
-    body: dict,
-    current_user: User = Depends(require_roles(["store_owner", "hq_admin"])),
-):
-    command = body.get("command", "")
-    return {
-        "parsed_intent": "가격 변경",
-        "menu_name": "아메리카노",
-        "current_price": 4500,
-        "simulated_price": 4000,
-        "revenue_delta": -12.5,
-        "margin_delta": -8.3,
-        "confidence": 0.87,
-    }
