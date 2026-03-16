@@ -12,6 +12,12 @@ from app.api.v1.endpoints import (
     analysis,
     reports,
     settings,
+    inventory,
+    labor,
+    ocr,
+    commands,
+    alerts,
+    agents,
 )
 
 api_router = APIRouter()
@@ -27,3 +33,9 @@ api_router.include_router(marketing.router, prefix="/marketing", tags=["marketin
 api_router.include_router(analysis.router, prefix="/analysis", tags=["analysis"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(settings.router, prefix="/settings", tags=["settings"])
+api_router.include_router(inventory.router, prefix="/inventory", tags=["inventory"])
+api_router.include_router(labor.router, prefix="/labor", tags=["labor"])
+api_router.include_router(ocr.router, prefix="/ocr", tags=["ocr"])
+api_router.include_router(commands.router, prefix="/commands", tags=["commands"])
+api_router.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
+api_router.include_router(agents.router, prefix="/agents", tags=["agents"])
