@@ -1,3 +1,5 @@
+from app.services.internal_ai_service import InternalAiService
+from app.services.resource_data_service import ResourceDataService
 import uuid
 import random
 from datetime import datetime, timezone
@@ -28,9 +30,24 @@ async def control_tower_overview(
     db: AsyncSession = Depends(get_db),
 ):
     metrics_service = ResourceMetricsService(db)
+    ai_service = InternalAiService()
+    data_service = ResourceDataService(db)
+    
+    # 1. 기본 지표 집계 (DB)
     overview = await metrics_service.get_hq_overview()
     agent_result = await db.execute(select(AgentStatus))
     agents = list(agent_result.scalars().all())
+    
+    # 2. AI 이상 탐지 연동 (전국 매장 영수증 기반)
+    ai_anomalies = []
+    try:
+        # 전국 최근 영수증 데이터 샘플링 (실제 서비스는 배치 또는 스트리밍 처리)
+        receipt_data = await data_service.get_dataset("receipt_listing", limit=200)
+        anomaly_result = await ai_service.get_anomaly_analysis(receipt_data)
+        ai_anomalies = anomaly_result.get("ai_insights", [])
+    except Exception as e:
+        ai_anomalies = [{"type": "warning", "title": "AI 분석 지연", "description": str(e)}]
+
     return {
         **overview,
         "agents": {
@@ -39,6 +56,8 @@ async def control_tower_overview(
             "degraded": sum(1 for a in agents if a.status == "degraded"),
             "down": sum(1 for a in agents if a.status == "down"),
         },
+        "ai_anomalies": ai_anomalies,
+        "generated_at": datetime.now(timezone.utc).isoformat()
     }
 
 
