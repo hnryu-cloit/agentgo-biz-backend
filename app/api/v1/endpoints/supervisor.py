@@ -1,3 +1,5 @@
+from app.services.internal_ai_service import InternalAiService
+from app.services.resource_data_service import ResourceDataService
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -198,3 +200,42 @@ async def get_visit_log(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return log
+
+@router.get("/stores/{store_id}/analysis")
+async def analyze_supervisor_store(
+    store_id: str,
+    current_user: User = Depends(require_roles(["supervisor", "hq_admin"])),
+    db: AsyncSession = Depends(get_db),
+):
+    """SV 전용: 특정 매장에 대한 AI 심층 분석 (이슈/코칭포인트 도출)"""
+    ai_service = InternalAiService()
+    data_service = ResourceDataService(db)
+    
+    # 분석에 필요한 매장 데이터 취합
+    sales_data = await data_service.get_dataset("pos_daily_sales", store_key=store_id, limit=50)
+    receipt_data = await data_service.get_dataset("receipt_listing", store_key=store_id, limit=50)
+    lineup_data = await data_service.get_dataset("menu_lineup", limit=50)
+    
+    # AI 엔진 다중 분석 호출
+    try:
+        menu_analysis = await ai_service.get_menu_analysis(sales_data, lineup_data)
+        anomaly_analysis = await ai_service.get_anomaly_analysis(receipt_data)
+        
+        # SV 코칭 포인트 생성 (AI 결과 기반)
+        coaching_points = []
+        if anomaly_analysis.get("summary", {}).get("anomaly_score_max", 0) > 1.5:
+            coaching_points.append("비정상 취소 패턴 감지에 따른 영수증 관리 프로세스 점검 필요")
+        
+        dogs_count = menu_analysis.get("summary", {}).get("dog_count", 0)
+        if dogs_count > 0:
+            coaching_points.append(f"수익성 하위 메뉴({dogs_count}건) 삭제 및 시그니처 메뉴 노출 강화 지도")
+            
+        return {
+            "store_id": store_id,
+            "ai_coaching_points": coaching_points or ["특이사항 없음. 현재 운영 품질 유지 지도"],
+            "risk_analysis": anomaly_analysis,
+            "menu_strategy": menu_analysis,
+            "generated_at": datetime.now(timezone.utc).isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI Analysis Failed: {str(e)}")
