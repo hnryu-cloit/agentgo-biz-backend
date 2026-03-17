@@ -6,6 +6,13 @@ pydantic
 pydantic-settings
 python-dotenv
 psycopg2-binary
+python-jose
+passlib
+bcrypt
+python-multipart
+asyncpg
+greenlet
 httpx
 pytest
 pytest-asyncio
+openpyxl

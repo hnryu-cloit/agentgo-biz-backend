@@ -1,9 +1,12 @@
 from typing import List, Optional
 
+from pydantic import ConfigDict
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    model_config = ConfigDict(env_file=".env")
+
     APP_ENV: str = "development"
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8001
@@ -15,8 +18,10 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "uploads"
     MAX_UPLOAD_SIZE_MB: int = 100
     CORS_ORIGINS: str = "http://localhost:5173"
+    RESOURCE_DATA_DIR: str = "resource"
     AI_SERVICE_URL: Optional[str] = None
     AI_SERVICE_TOKEN: Optional[str] = None
+    AI_SERVICE_TIMEOUT_SECONDS: int = 30
     ADMIN_EMAILS: str = ""
 
     @property
@@ -26,9 +31,5 @@ class Settings(BaseSettings):
     @property
     def admin_emails_list(self) -> List[str]:
         return [e.strip() for e in self.ADMIN_EMAILS.split(",") if e.strip()]
-
-    class Config:
-        env_file = ".env"
-
 
 settings = Settings()
