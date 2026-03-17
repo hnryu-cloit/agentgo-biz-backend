@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from typing import Optional, List
 
@@ -13,9 +13,9 @@ class ItemMasterCreate(ItemMasterBase):
     pass
 
 class ItemMaster(ItemMasterBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
-    class Config:
-        from_attributes = True
 
 class InventoryAuditCreate(BaseModel):
     item_id: int
@@ -23,10 +23,10 @@ class InventoryAuditCreate(BaseModel):
     store_id: int
 
 class InventoryAudit(InventoryAuditCreate):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     audit_date: datetime
-    class Config:
-        from_attributes = True
 
 class InventoryLoss(BaseModel):
     item_id: int

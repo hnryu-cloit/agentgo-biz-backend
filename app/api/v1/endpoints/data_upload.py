@@ -12,18 +12,21 @@ from app.db.database import get_db
 from app.models.user import User
 from app.models.upload_job import UploadJob
 from app.schemas.upload import UploadJobCreateResponse, UploadJobResponse, UploadMappingRequest
+from app.services.resource_data_service import ResourceDataService, SOURCE_SPECS
 from app.services.upload_service import UploadService
 
 router = APIRouter()
 
 ALLOWED_EXTENSIONS = {".csv", ".xlsx"}
 MAX_SIZE_BYTES = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+LEGACY_DATA_TYPES = {"sales", "cost", "customer", "review"}
+SUPPORTED_DATA_TYPES = LEGACY_DATA_TYPES | set(SOURCE_SPECS.keys())
 
 
 @router.post("/upload", response_model=UploadJobCreateResponse, status_code=status.HTTP_201_CREATED)
 async def upload_file(
     file: UploadFile = File(...),
-    data_type: str = Query(..., description="sales/cost/customer/review"),
+    data_type: str = Query(..., description="sales/cost/customer/review/pos_daily_sales/bo_point_usage/receipt_listing/menu_lineup"),
     store_id: str = Query(...),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -40,7 +43,7 @@ async def upload_file(
     if file_size > MAX_SIZE_BYTES:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File too large (max 100MB)")
 
-    if data_type not in ["sales", "cost", "customer", "review"]:
+    if data_type not in SUPPORTED_DATA_TYPES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid data_type")
 
     # Save file
@@ -61,6 +64,31 @@ async def upload_file(
         file_path=file_path,
         file_size_bytes=file_size,
     )
+
+    if data_type in SOURCE_SPECS:
+        parser = ResourceDataService()
+        try:
+            dataset = parser.get_dataset(source_kind=data_type, store_key=store_id, limit=10)
+            job.preview_rows = dataset["rows"]
+            job.period_start = dataset["summary"].get("date_start")
+            job.period_end = dataset["summary"].get("date_end")
+            job.error_detail = {
+                "source_kind": data_type,
+                "headers": dataset["headers"],
+                "summary": dataset["summary"],
+            }
+            job.pipeline_stages = {
+                "normalize": "completed",
+                "kpi_aggregate": "pending",
+                "margin_guard": "pending",
+                "rfm": "pending",
+                "anomaly_detect": "pending",
+                "briefing_schedule": "pending",
+            }
+            await db.commit()
+            await db.refresh(job)
+        except ValueError:
+            pass
 
     return UploadJobCreateResponse(job_id=job.id, status=job.status)
 

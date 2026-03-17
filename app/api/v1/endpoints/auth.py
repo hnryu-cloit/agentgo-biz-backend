@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.security import (
+    hash_password,
     verify_password,
     create_access_token,
     create_refresh_token,
@@ -15,6 +16,7 @@ from app.core.security import (
 )
 from app.core.config import settings
 from app.db.database import get_db
+from app.models.store import Store
 from app.models.user import User
 from app.models.token import RevokedToken
 from app.schemas.auth import (
@@ -28,12 +30,45 @@ from app.schemas.auth import (
 
 router = APIRouter()
 security = HTTPBearer()
+DEMO_EMAIL = "demo@agentgo.biz"
+DEMO_PASSWORD = "password"
 
 
 @router.post("/login", response_model=TokenResponse)
 async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == request.email))
     user = result.scalar_one_or_none()
+
+    if request.email == DEMO_EMAIL and request.password == DEMO_PASSWORD:
+        selected_role = request.role or "store_owner"
+        demo_store_id = None
+        if selected_role == "store_owner":
+            demo_store_id = (
+                await db.execute(select(Store.id).order_by(Store.created_at.asc()).limit(1))
+            ).scalar_one_or_none()
+
+        if user is None:
+            user = User(
+                id=str(uuid.uuid4()),
+                email=DEMO_EMAIL,
+                name="Demo User",
+                hashed_password=hash_password(DEMO_PASSWORD),
+                role=selected_role,
+                store_id=demo_store_id,
+                is_active=True,
+            )
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+        else:
+            user.role = selected_role
+            user.is_active = True
+            if selected_role == "store_owner":
+                user.store_id = demo_store_id
+            else:
+                user.store_id = None
+            await db.commit()
+            await db.refresh(user)
 
     if not user or not verify_password(request.password, user.hashed_password):
         raise HTTPException(

@@ -22,6 +22,7 @@ class Store(Base):
     break_end: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     seats: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     service_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    resource_store_key: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

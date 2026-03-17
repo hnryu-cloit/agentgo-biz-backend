@@ -17,6 +17,7 @@ from app.models.notice import Notice
 from app.models.agent_status import AgentStatus
 from app.schemas.alert import AlertResponse, AlertUpdateRequest
 from app.schemas.notice import NoticeResponse, NoticeDistributeRequest
+from app.services.resource_metrics_service import ResourceMetricsService
 
 router = APIRouter()
 
@@ -26,31 +27,17 @@ async def control_tower_overview(
     current_user: User = Depends(require_roles(["hq_admin", "supervisor"])),
     db: AsyncSession = Depends(get_db),
 ):
-    # Store counts
-    store_count_result = await db.execute(select(func.count(Store.id)).where(Store.is_active == True))
-    total_stores = store_count_result.scalar() or 0
-
-    # Active alerts
-    alert_count_result = await db.execute(
-        select(func.count(Alert.id)).where(Alert.status != "resolved")
-    )
-    active_alerts = alert_count_result.scalar() or 0
-
-    # Agent health summary
+    metrics_service = ResourceMetricsService(db)
+    overview = await metrics_service.get_hq_overview()
     agent_result = await db.execute(select(AgentStatus))
     agents = list(agent_result.scalars().all())
-    healthy = sum(1 for a in agents if a.status == "healthy")
-    degraded = sum(1 for a in agents if a.status == "degraded")
-    down = sum(1 for a in agents if a.status == "down")
-
     return {
-        "total_stores": total_stores,
-        "active_alerts": active_alerts,
+        **overview,
         "agents": {
             "total": len(agents),
-            "healthy": healthy,
-            "degraded": degraded,
-            "down": down,
+            "healthy": sum(1 for a in agents if a.status == "healthy"),
+            "degraded": sum(1 for a in agents if a.status == "degraded"),
+            "down": sum(1 for a in agents if a.status == "down"),
         },
     }
 

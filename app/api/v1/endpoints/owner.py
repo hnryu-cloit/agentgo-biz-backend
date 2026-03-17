@@ -1,74 +1,50 @@
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select
 
 from app.core.dependencies import get_current_user, require_roles
 from app.db.database import get_db
 from app.models.user import User
 from app.models.action import Action
-from app.models.sales import SalesKpi
 from app.models.store import Store
 from app.schemas.action import ActionResponse, ActionUpdateRequest
+from app.services.resource_metrics_service import ResourceMetricsService
 
 router = APIRouter()
 
 
 @router.get("/dashboard")
 async def owner_dashboard(
+    store_key: Optional[str] = Query(None, description="조회할 매장 키 (미입력 시 첫 번째 매장)"),
     current_user: User = Depends(require_roles(["store_owner", "hq_admin"])),
     db: AsyncSession = Depends(get_db),
 ):
-    store_id = current_user.store_id
-    if not store_id and current_user.role != "hq_admin":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No store assigned")
+    metrics_service = ResourceMetricsService(db)
+    if not store_key:
+        resource_stores = await metrics_service.get_store_options()
+        store_key = resource_stores[0]["store_key"] if resource_stores else None
+    metrics = await metrics_service.get_owner_dashboard_metrics(store_key=store_key)
+    return metrics
 
-    # Get store name
-    store_name = "Unknown Store"
-    if store_id:
-        result = await db.execute(select(Store).where(Store.id == store_id))
-        store = result.scalar_one_or_none()
-        if store:
-            store_name = store.name
 
-    # Get today's KPI (mock aggregate if no data)
-    today = datetime.now(timezone.utc).date()
-    kpi_result = await db.execute(
-        select(SalesKpi).where(
-            SalesKpi.store_id == store_id,
-            SalesKpi.date == today,
-            SalesKpi.hour == None,
-        )
-    ) if store_id else None
-
-    kpi = kpi_result.scalar_one_or_none() if kpi_result else None
-
-    # Hourly trend
-    hourly_result = await db.execute(
-        select(SalesKpi).where(
-            SalesKpi.store_id == store_id,
-            SalesKpi.date == today,
-            SalesKpi.hour != None,
-        ).order_by(SalesKpi.hour)
-    ) if store_id else None
-
-    hourly_data = []
-    if hourly_result:
-        for row in hourly_result.scalars().all():
-            hourly_data.append({"hour": row.hour, "revenue": row.revenue})
-
-    return {
-        "store_name": store_name,
-        "today_revenue": kpi.revenue if kpi else 0.0,
-        "revenue_vs_yesterday": 0.0,
-        "transaction_count": kpi.transaction_count if kpi else 0,
-        "avg_order_value": kpi.avg_order_value if kpi else 0.0,
-        "cancel_rate": kpi.cancel_rate if kpi else 0.0,
-        "peak_hour": None,
-        "kpi_trend": hourly_data,
-    }
+@router.get("/customer-insights")
+async def owner_customer_insights(
+    store_key: Optional[str] = Query(None, description="조회할 매장 키 (미입력 시 첫 번째 매장)"),
+    days: int = Query(90, ge=7, le=365, description="분석 기간 (일)"),
+    current_user: User = Depends(require_roles(["store_owner", "hq_admin"])),
+    db: AsyncSession = Depends(get_db),
+):
+    """도도포인트 기반 고객 방문 분석 (재방문율, 일별 트렌드 등)"""
+    metrics_service = ResourceMetricsService(db)
+    if not store_key:
+        resource_stores = await metrics_service.get_store_options()
+        store_key = resource_stores[0]["store_key"] if resource_stores else None
+    if not store_key:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="사용 가능한 매장 데이터가 없습니다")
+    return await metrics_service.get_dodo_customer_metrics(store_key=store_key, days=days)
 
 
 @router.get("/actions", response_model=List[ActionResponse])
@@ -129,5 +105,4 @@ async def suggest_qna(current_user: User = Depends(require_roles(["store_owner",
             "단골 고객 이탈을 방지하는 방법은?",
         ]
     }
-
 

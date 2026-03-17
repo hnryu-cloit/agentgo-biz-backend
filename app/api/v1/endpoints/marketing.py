@@ -33,12 +33,37 @@ async def rfm_segments(
     total_at_risk = sum(s.at_risk_count for s in snapshots)
     total_churned = sum(s.churned_count for s in snapshots)
 
-    return {
-        "vip": {"count": total_vip, "sales_share": 0.0},
-        "loyal": {"count": total_loyal, "sales_share": 0.0},
-        "at_risk": {"count": total_at_risk, "sales_share": 0.0},
-        "churned": {"count": total_churned, "sales_share": 0.0},
-    }
+    total_count = max(total_vip + total_loyal + total_at_risk + total_churned, 1)
+    return [
+        {
+            "segment": "champions",
+            "count": total_vip,
+            "avg_order_value": 0.0,
+            "avg_visit_frequency": 0.0,
+            "revenue_share": round(total_vip / total_count, 4),
+        },
+        {
+            "segment": "loyal",
+            "count": total_loyal,
+            "avg_order_value": 0.0,
+            "avg_visit_frequency": 0.0,
+            "revenue_share": round(total_loyal / total_count, 4),
+        },
+        {
+            "segment": "at_risk",
+            "count": total_at_risk,
+            "avg_order_value": 0.0,
+            "avg_visit_frequency": 0.0,
+            "revenue_share": round(total_at_risk / total_count, 4),
+        },
+        {
+            "segment": "lost",
+            "count": total_churned,
+            "avg_order_value": 0.0,
+            "avg_visit_frequency": 0.0,
+            "revenue_share": round(total_churned / total_count, 4),
+        },
+    ]
 
 
 @router.get("/rfm/churn-risks")
@@ -55,14 +80,12 @@ async def churn_risks(
 
     return [
         {
-            "id": c.id,
-            "store_id": c.store_id,
-            "external_key": c.external_key,
-            "rfm_segment": c.rfm_segment,
-            "risk_score": c.risk_score,
-            "days_since_last_visit": c.days_since_last_visit,
-            "avg_order_value": c.avg_order_value,
-            "total_ltv": c.total_ltv,
+            "customer_id": c.id,
+            "name": c.external_key,
+            "last_visit_date": c.last_visit_date.isoformat() if c.last_visit_date else None,
+            "churn_probability": c.risk_score,
+            "segment": c.rfm_segment,
+            "recommended_offer": "재방문 쿠폰 제공",
         }
         for c in customers
     ]
@@ -81,7 +104,7 @@ async def exclude_churn_risk(
     # Toggle risk_score to 0 as exclusion flag (in-memory/simple approach)
     customer.risk_score = 0.0 if (customer.risk_score or 0) > 0 else -1.0
     await db.commit()
-    return {"customer_id": customer_id, "excluded": customer.risk_score == 0.0}
+    return {"message": f"Customer {customer_id} exclusion updated"}
 
 
 @router.get("/campaigns", response_model=List[CampaignResponse])

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from typing import Optional, List
 
@@ -14,9 +14,9 @@ class EmployeeScheduleCreate(EmployeeScheduleBase):
     pass
 
 class EmployeeSchedule(EmployeeScheduleBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
-    class Config:
-        from_attributes = True
 
 class LaborTargetBase(BaseModel):
     store_id: int
@@ -26,10 +26,10 @@ class LaborTargetCreate(LaborTargetBase):
     pass
 
 class LaborTarget(LaborTargetBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     updated_at: datetime
-    class Config:
-        from_attributes = True
 
 class LaborPerformance(BaseModel):
     store_id: int

@@ -1,11 +1,12 @@
 from typing import List, Optional
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.security import decode_token
+from app.core.config import settings
 from app.db.database import get_db
 from app.models.user import User
 from app.models.token import RevokedToken
@@ -64,3 +65,17 @@ def require_roles(roles: List[str]):
             )
         return current_user
     return role_checker
+
+
+async def verify_ai_service_token(x_ai_service_token: Optional[str] = Header(None)) -> str:
+    if not settings.AI_SERVICE_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service token is not configured",
+        )
+    if x_ai_service_token != settings.AI_SERVICE_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid AI service token",
+        )
+    return x_ai_service_token

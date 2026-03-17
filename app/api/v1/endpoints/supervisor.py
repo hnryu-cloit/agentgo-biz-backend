@@ -17,6 +17,7 @@ from app.models.visit_log import VisitLog
 from app.models.sales import SalesKpi
 from app.schemas.visit_log import VisitLogCreateRequest, VisitLogResponse
 from app.schemas.escalation import EscalationCreateRequest, EscalationResponse
+from app.services.resource_metrics_service import ResourceMetricsService
 from app.services.store_service import StoreService
 
 router = APIRouter()
@@ -27,30 +28,8 @@ async def supervisor_dashboard(
     current_user: User = Depends(require_roles(["supervisor", "hq_admin"])),
     db: AsyncSession = Depends(get_db),
 ):
-    service = StoreService(db)
-    if current_user.role == "supervisor":
-        store_ids = await service.get_assigned_store_ids(current_user.id)
-    else:
-        result = await db.execute(select(Store.id).where(Store.is_active == True))
-        store_ids = [row[0] for row in result.fetchall()]
-
-    p0_count = 0
-    if store_ids:
-        result = await db.execute(
-            select(func.count(Alert.id)).where(
-                Alert.store_id.in_(store_ids),
-                Alert.severity == "P0",
-                Alert.status != "resolved",
-            )
-        )
-        p0_count = result.scalar() or 0
-
-    return {
-        "total_stores": len(store_ids),
-        "p0_alert_count": p0_count,
-        "avg_cancel_rate": 0.0,
-        "low_margin_store_count": 0,
-    }
+    metrics_service = ResourceMetricsService(db)
+    return await metrics_service.get_supervisor_summary()
 
 
 @router.get("/stores")
@@ -60,31 +39,8 @@ async def list_supervisor_stores(
     current_user: User = Depends(require_roles(["supervisor", "hq_admin"])),
     db: AsyncSession = Depends(get_db),
 ):
-    service = StoreService(db)
-    stores = await service.get_stores_for_user(current_user)
-
-    store_list = []
-    for store in stores:
-        # Get latest alert count
-        alert_result = await db.execute(
-            select(func.count(Alert.id)).where(
-                Alert.store_id == store.id,
-                Alert.status != "resolved",
-            )
-        )
-        alert_count = alert_result.scalar() or 0
-
-        store_list.append({
-            "id": store.id,
-            "name": store.name,
-            "region": store.region,
-            "size": store.size,
-            "is_active": store.is_active,
-            "alert_count": alert_count,
-            "risk_score": round(alert_count * 0.1, 2),
-        })
-
-    return store_list
+    metrics_service = ResourceMetricsService(db)
+    return await metrics_service.get_supervisor_store_rows()
 
 
 @router.get("/stores/{store_id}/kpi")
@@ -93,26 +49,29 @@ async def get_store_kpi(
     current_user: User = Depends(require_roles(["supervisor", "hq_admin"])),
     db: AsyncSession = Depends(get_db),
 ):
-    service = StoreService(db)
-    if current_user.role == "supervisor":
-        assigned = await service.get_assigned_store_ids(current_user.id)
-        if store_id not in assigned:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-
-    result = await db.execute(select(Store).where(Store.id == store_id))
-    store = result.scalar_one_or_none()
-    if not store:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Store not found")
-
+    metrics_service = ResourceMetricsService(db)
+    dashboard = await metrics_service.get_owner_dashboard_metrics(store_key=store_id)
+    receipt_snapshot = await metrics_service.get_receipt_snapshot(store_key=store_id)
+    customer_insights = await metrics_service.get_dodo_customer_metrics(store_key=store_id, days=30)
     return {
         "store_id": store_id,
-        "store_name": store.name,
-        "revenue_today": 0.0,
-        "revenue_yesterday": 0.0,
-        "cancel_rate_today": 0.0,
-        "cancel_rate_avg": 0.0,
-        "avg_order_value_today": 0.0,
-        "avg_order_value_avg": 0.0,
+        "store_name": dashboard["store_name"],
+        "revenue_today": dashboard["today_revenue"],
+        "revenue_yesterday": max(dashboard["today_revenue"] - dashboard["revenue_vs_yesterday"], 0.0),
+        "cancel_rate_today": dashboard["cancel_rate"],
+        "cancel_rate_avg": dashboard["cancel_rate"],
+        "avg_order_value_today": dashboard["avg_order_value"],
+        "avg_order_value_avg": dashboard["avg_order_value"],
+        "receipt_count": receipt_snapshot.get("receipt_count", 0),
+        "payment_total": receipt_snapshot.get("payment_total", 0.0),
+        "sales_date": receipt_snapshot.get("sales_date"),
+        "customer_insights": {
+            "unique_customers_30d": customer_insights["unique_customers"],
+            "return_rate": customer_insights["return_rate"],
+            "recent_7d_visits": customer_insights["recent_7d_visits"],
+            "visit_trend_delta_pct": customer_insights["visit_trend_delta_pct"],
+            "earn_count": customer_insights["earn_count"],
+        },
     }
 
 
