@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -12,8 +12,23 @@ from app.models.user import User
 from app.models.campaign import Campaign
 from app.models.customer import Customer, RfmSnapshot
 from app.schemas.campaign import CampaignCreateRequest, CampaignResponse
+from app.services.campaign_simulation_service import CampaignSimulationService
+from app.services.campaign_uplift_service import CampaignUpliftService
 
 router = APIRouter()
+DEFAULT_CAMPAIGN_STORE_KEY = "[CJ]광화문점"
+SEGMENT_COUNT_ATTR = {
+    "champions": "vip_count",
+    "loyal": "loyal_count",
+    "at_risk": "at_risk_count",
+    "lost": "churned_count",
+}
+SEGMENT_MENU_PRESET = {
+    "champions": {"menu_name": "광동의점심상(2인)", "menu_price": 78000.0, "margin_rate": 0.31, "daily_avg_qty": 7.0},
+    "loyal": {"menu_name": "특선런치 A코스", "menu_price": 55000.0, "margin_rate": 0.33, "daily_avg_qty": 8.0},
+    "at_risk": {"menu_name": "셰프의 마파박스", "menu_price": 39000.0, "margin_rate": 0.36, "daily_avg_qty": 14.0},
+    "lost": {"menu_name": "셰프의 새우박스", "menu_price": 42000.0, "margin_rate": 0.34, "daily_avg_qty": 11.0},
+}
 
 
 @router.get("/rfm/segments")
@@ -159,9 +174,59 @@ async def send_campaign(
     if campaign.status != "draft":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only draft campaigns can be sent")
 
+    sent_count = await _resolve_target_count(db, campaign.target_segment)
+    uplift_service = CampaignUpliftService(db)
+    bep_service = CampaignSimulationService(db)
+    uplift_result = None
+    bep_result = None
+    try:
+        uplift_result = await uplift_service.predict_uplift(
+            store_key=DEFAULT_CAMPAIGN_STORE_KEY,
+            segment_name=campaign.target_segment,
+            channel=campaign.channel,
+            target_customers=sent_count,
+            discount_rate=float(campaign.offer_value or 0.0) / 100,
+        )
+    except Exception:
+        uplift_result = None
+    try:
+        menu_preset = SEGMENT_MENU_PRESET.get(campaign.target_segment, SEGMENT_MENU_PRESET["at_risk"])
+        bep_result = await bep_service.simulate_bep(
+            store_key=DEFAULT_CAMPAIGN_STORE_KEY,
+            segment_name=campaign.target_segment,
+            channel=campaign.channel,
+            offer_type=campaign.offer_type,
+            offer_value=float(campaign.offer_value or 0.0),
+            target_customers=sent_count,
+            promo_days=max(_campaign_days(campaign), 7),
+            fixed_cost=50000.0,
+            menu_name=menu_preset["menu_name"],
+            menu_price=menu_preset["menu_price"],
+            margin_rate=menu_preset["margin_rate"],
+            daily_avg_qty=menu_preset["daily_avg_qty"],
+        )
+    except Exception:
+        bep_result = None
+
     campaign.status = "sent"
-    campaign.sent_at = datetime.now(timezone.utc)
-    campaign.sent_count = 100  # mock
+    campaign.sent_at = datetime.utcnow()
+    campaign.sent_count = sent_count
+    campaign.opened_count = (
+        round(sent_count * uplift_result["expected_redemption_rate"] * 4.1)
+        if uplift_result
+        else round(sent_count * 0.42)
+    )
+    campaign.used_count = (
+        uplift_result["expected_incremental_orders"]
+        if uplift_result
+        else round(sent_count * 0.11)
+    )
+    campaign.revisit_count = campaign.used_count
+    campaign.revenue_attributed = (
+        float(bep_result["expected_incremental_revenue"])
+        if bep_result
+        else float(campaign.used_count * 39000)
+    )
 
     await db.commit()
     await db.refresh(campaign)
@@ -197,3 +262,73 @@ async def campaign_performance(
         }
         for c in campaigns
     ]
+
+
+@router.get("/campaigns/simulate-bep")
+async def campaign_simulate_bep(
+    store_key: str = Query(...),
+    segment_name: str = Query(...),
+    channel: str = Query(...),
+    offer_type: str = Query(...),
+    offer_value: float = Query(...),
+    target_customers: int = Query(...),
+    promo_days: int = Query(...),
+    fixed_cost: float = Query(...),
+    menu_name: str = Query(...),
+    menu_price: float = Query(...),
+    margin_rate: float = Query(...),
+    daily_avg_qty: float = Query(...),
+    current_user: User = Depends(require_roles(["marketer", "hq_admin"])),
+    db: AsyncSession = Depends(get_db),
+):
+    service = CampaignSimulationService(db)
+    return await service.simulate_bep(
+        store_key=store_key,
+        segment_name=segment_name,
+        channel=channel,
+        offer_type=offer_type,
+        offer_value=offer_value,
+        target_customers=target_customers,
+        promo_days=promo_days,
+        fixed_cost=fixed_cost,
+        menu_name=menu_name,
+        menu_price=menu_price,
+        margin_rate=margin_rate,
+        daily_avg_qty=daily_avg_qty,
+    )
+
+
+@router.get("/campaigns/predict-uplift")
+async def campaign_predict_uplift(
+    store_key: str = Query(...),
+    segment_name: str = Query(...),
+    channel: str = Query(...),
+    target_customers: int = Query(...),
+    discount_rate: float = Query(...),
+    current_user: User = Depends(require_roles(["marketer", "hq_admin"])),
+    db: AsyncSession = Depends(get_db),
+):
+    service = CampaignUpliftService(db)
+    return await service.predict_uplift(
+        store_key=store_key,
+        segment_name=segment_name,
+        channel=channel,
+        target_customers=target_customers,
+        discount_rate=discount_rate,
+    )
+
+
+async def _resolve_target_count(db: AsyncSession, target_segment: str) -> int:
+    latest_snapshot = (
+        await db.execute(select(RfmSnapshot).order_by(RfmSnapshot.snapshot_date.desc()).limit(1))
+    ).scalar_one_or_none()
+    attr_name = SEGMENT_COUNT_ATTR.get(target_segment, "at_risk_count")
+    if latest_snapshot and hasattr(latest_snapshot, attr_name):
+        return max(1, int(getattr(latest_snapshot, attr_name) or 0))
+    return 100
+
+
+def _campaign_days(campaign: Campaign) -> int:
+    if campaign.start_date and campaign.end_date:
+        return max((campaign.end_date - campaign.start_date).days + 1, 1)
+    return 7

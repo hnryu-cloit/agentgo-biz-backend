@@ -849,12 +849,12 @@ class ResourceDataService:
         return True
 
     def _iter_source_files(self, source_kind: str, store_key: Optional[str] = None) -> Iterable[Path]:
-        source_dir = self.base_dir / SOURCE_SPECS[source_kind]["directory_name"]
+        source_dir = self._get_source_dir(SOURCE_SPECS[source_kind]["directory_name"])
         if source_kind == "menu_lineup":
             return [self._get_menu_workbook_path()]
 
         if store_key and source_kind != "receipt_listing":
-            source_dir = source_dir / store_key
+            source_dir = self._find_child_dir(source_dir, store_key)
         if not source_dir.exists():
             return []
         files = sorted(source_dir.rglob("*.xlsx"))
@@ -867,11 +867,33 @@ class ResourceDataService:
         return files
 
     def _get_menu_workbook_path(self) -> Path:
-        source_dir = self.base_dir / SOURCE_SPECS["menu_lineup"]["directory_name"]
+        source_dir = self._get_source_dir(SOURCE_SPECS["menu_lineup"]["directory_name"])
         files = sorted(source_dir.glob("*.xlsx"))
         if not files:
             raise ValueError("Menu lineup workbook not found")
         return files[0]
+
+    def _get_source_dir(self, directory_name: str) -> Path:
+        direct = self.base_dir / directory_name
+        if direct.exists():
+            return direct
+
+        normalized_target = self._normalize_key(directory_name)
+        for child in self.base_dir.iterdir():
+            if child.is_dir() and self._normalize_key(child.name) == normalized_target:
+                return child
+        return direct
+
+    def _find_child_dir(self, parent_dir: Path, child_name: str) -> Path:
+        direct = parent_dir / child_name
+        if direct.exists():
+            return direct
+
+        normalized_target = self._normalize_key(child_name)
+        for child in parent_dir.iterdir():
+            if child.is_dir() and self._normalize_key(child.name) == normalized_target:
+                return child
+        return direct
 
     def _extract_date_range_from_filename(self, file_name: str) -> tuple[Optional[date], Optional[date]]:
         date_candidates = []
