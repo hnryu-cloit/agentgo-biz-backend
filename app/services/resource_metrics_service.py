@@ -35,7 +35,7 @@ class ResourceMetricsService:
 
     async def get_store_options(self) -> list[dict[str, Any]]:
         result = await self.db.execute(
-            select(ResourceStore.store_key, ResourceStore.store_name)
+            select(ResourceStore.store_key, ResourceStore.store_name).where(ResourceStore.store_name.like("%크리스탈제이드%"))
             .where(ResourceStore.source_kind == "pos_daily_sales")
             .order_by(ResourceStore.store_name.asc())
         )
