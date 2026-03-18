@@ -11,8 +11,19 @@ from app.db.database import get_db
 from app.models.resource_data import DodoPointSnapshot, PosDailySalesSnapshot
 from app.models.user import User
 from app.services.resource_metrics_service import ResourceMetricsService
+from app.services.store_intelligence_service import StoreIntelligenceService
 
 router = APIRouter()
+
+
+@router.get("/store-intelligence")
+async def store_intelligence(
+    store_key: Optional[str] = Query(None),
+    current_user: User = Depends(require_roles(["store_owner", "hq_admin", "supervisor", "marketer"])),
+    db: AsyncSession = Depends(get_db),
+):
+    service = StoreIntelligenceService(db)
+    return await service.build_store_intelligence(store_key=store_key)
 
 
 @router.get("/roi")
