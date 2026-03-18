@@ -1,3 +1,5 @@
+from app.services.internal_ai_service import InternalAiService
+from app.services.resource_data_service import ResourceDataService
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -17,6 +19,72 @@ router = APIRouter()
 
 
 @router.get("/dashboard")
+async def owner_dashboard(
+    store_key: Optional[str] = Query(None, description="조회할 매장 키 (미입력 시 첫 번째 매장)"),
+    current_user: User = Depends(require_roles(["store_owner", "hq_admin"])),
+    db: AsyncSession = Depends(get_db),
+):
+    metrics_service = ResourceMetricsService(db)
+    ai_service = InternalAiService()
+    data_service = ResourceDataService(db)
+    
+    if not store_key:
+        resource_stores = await metrics_service.get_store_options()
+        store_key = resource_stores[0]["store_key"] if resource_stores else None
+    
+    # 1. 기본 지표 집계 (DB)
+    metrics = await metrics_service.get_owner_dashboard_metrics(store_key=store_key)
+    
+    # 2. AI 통합 분석 연동 (ML + Gemini Interpretation)
+    try:
+        sales_data = await data_service.get_dataset("pos_daily_sales", store_key=store_key, limit=100)
+        lineup_data = await data_service.get_dataset("menu_lineup", limit=100)
+        point_data = await data_service.get_dataset("dodo_point", store_key=store_key, limit=100)
+        receipt_data = await data_service.get_dataset("receipt_listing", store_key=store_key, limit=100)
+        
+        # AI 엔진 통합 분석 호출
+        full_analysis = await ai_service.get_full_analysis(sales_data, lineup_data, point_data, receipt_data)
+        
+        metrics["ai_analysis"] = full_analysis
+    except Exception as e:
+        metrics["ai_analysis"] = {"error": str(e), "status": "degraded"}
+        
+    return metrics
+async def owner_dashboard(
+    store_key: Optional[str] = Query(None, description="조회할 매장 키 (미입력 시 첫 번째 매장)"),
+    current_user: User = Depends(require_roles(["store_owner", "hq_admin"])),
+    db: AsyncSession = Depends(get_db),
+):
+    metrics_service = ResourceMetricsService(db)
+    ai_service = InternalAiService()
+    data_service = ResourceDataService(db)
+    
+    if not store_key:
+        resource_stores = await metrics_service.get_store_options()
+        store_key = resource_stores[0]["store_key"] if resource_stores else None
+    
+    # 1. 기본 지표 집계 (DB)
+    metrics = await metrics_service.get_owner_dashboard_metrics(store_key=store_key)
+    
+    # 2. AI 분석 연동 (오케스트레이션)
+    try:
+        sales_data = await data_service.get_dataset("pos_daily_sales", store_key=store_key, limit=100)
+        lineup_data = await data_service.get_dataset("menu_lineup", limit=100)
+        point_data = await data_service.get_dataset("dodo_point", store_key=store_key, limit=100)
+        
+        # 병렬 호출 또는 순차 호출
+        menu_analysis = await ai_service.get_menu_analysis(sales_data, lineup_data)
+        churn_analysis = await ai_service.get_churn_analysis(point_data)
+        
+        metrics["ai_analysis"] = {
+            "menu_engineering": menu_analysis,
+            "customer_churn": churn_analysis,
+            "generated_at": datetime.now(timezone.utc).isoformat()
+        }
+    except Exception as e:
+        metrics["ai_analysis"] = {"error": str(e), "status": "degraded"}
+        
+    return metrics
 async def owner_dashboard(
     store_key: Optional[str] = Query(None, description="조회할 매장 키 (미입력 시 첫 번째 매장)"),
     current_user: User = Depends(require_roles(["store_owner", "hq_admin"])),

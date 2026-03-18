@@ -35,3 +35,11 @@ class InternalAiService:
         return await self._post('/analyze/operational-anomalies', {
             'receipt_data': receipt_data
         })
+
+    async def get_full_analysis(self, sales_data: List[Dict], lineup_data: List[Dict], point_data: List[Dict], receipt_data: List[Dict]) -> Dict[str, Any]:
+        return await self._post('/analyze/full-dashboard', {
+            'sales_data': sales_data,
+            'lineup_data': lineup_data,
+            'point_data': point_data,
+            'receipt_data': receipt_data
+        })
